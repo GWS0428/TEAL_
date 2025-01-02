@@ -89,12 +89,17 @@ class KVCache(nn.Module):
         # input_pos: [S], k_val: [B, H, S, D]
         assert input_pos.shape[0] == k_val.shape[2]
 
-        k_out = self.k_cache
-        v_out = self.v_cache
-        k_out[:, :, input_pos] = k_val
-        v_out[:, :, input_pos] = v_val
+        # k_out = self.k_cache
+        # v_out = self.v_cache
+        # k_out[:, :, input_pos] = k_val
+        # v_out[:, :, input_pos] = v_val
 
-        return k_out, v_out
+        # return k_out, v_out
+
+        self.k_cache[:, :, input_pos] = k_val
+        self.v_cache[:, :, input_pos] = v_val
+
+        return self.k_cache, self.v_cache
 
 class Transformer(nn.Module):
     def __init__(self, config: ModelArgs) -> None:
@@ -171,13 +176,23 @@ def _new_attn_forward(self, x: Tensor, freqs_cis: Tensor, mask: Tensor, input_po
     k = k.view(bsz, seqlen, self.n_local_heads, self.head_dim)
     v = v.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
+    if self.kv_cache is not None:
+        q_, k_, v_ = map(lambda x: x.transpose(1, 2), (q, k, v))
+        # make a k_zero whose entry below than threshold is zero
+        k_zero = torch.where(k_ < self.thresh_k, torch.zeros_like(k_), k_)
+        v_zero = torch.where(v_ < self.thresh_v, torch.zeros_like(v_), v_)
+        k, v = self.kv_cache.update(input_pos, k_zero, v_zero)
+    else:
+        raise ValueError("KV cache must be initialized first")
+
+    k, v = map(lambda x: x.transpose(1, 2), (k, v))
     q = apply_rotary_emb(q, freqs_cis)
     k = apply_rotary_emb(k, freqs_cis)
 
-    q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
+    k, v = map(lambda x: x.transpose(1, 2), (k, v))
 
-    if self.kv_cache is not None:
-        k, v = self.kv_cache.update(input_pos, k, v)
+    # if self.kv_cache is not None:
+    #     k, v = self.kv_cache.update(input_pos, k, v)
 
     k = k.repeat_interleave(self.n_head // self.n_local_heads, dim=1)
     v = v.repeat_interleave(self.n_head // self.n_local_heads, dim=1)

@@ -5,6 +5,10 @@ from transformers import AutoConfig
 from collections import defaultdict
 
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+import json
 
 class SparsifyFn(nn.Module):
     def __init__(self, distr, init_sparsity=None,init_threshold=None, apply_prefill=True):
@@ -257,3 +261,91 @@ def get_layer_greedy_sparsities(layer_sparsities, results_dir):
             sparsities[proj][layer] = closest_row[proj].values[0]
     
     return sparsities
+
+
+def visualize_zeros(tensor, layer_idx, head_idx, output_path="zero_values_matrix.png"):
+    """
+    Visualize the zero values in an (n, m) matrix extracted from a (1, 1, n, m) tensor.
+
+    Parameters:
+        tensor (numpy.ndarray): A tensor of shape (1, 1, n, m).
+        layer_idx (int): The index of the layer.
+        head_idx (int): The index of the attention head.
+        output_path (str): Path to save the generated figure.
+    """
+    # Extract the (n, m) matrix
+    matrix = tensor[0, head_idx, :, :]
+    matrix = matrix.cpu().numpy()
+
+    # Create a binary mask: 0 for zeros, 1 for non-zeros
+    zero_mask = (matrix == 0).astype(int)
+
+    # Define a colormap: red for zeros, black for non-zeros
+    cmap = ListedColormap(["red", "black"])
+
+    # Create a plot
+    plt.figure(figsize=(8, 6))
+    plt.imshow(zero_mask, cmap=cmap, interpolation="none")
+    plt.colorbar(label="Zero Highlight (Red)")
+    plt.title(f"Zero Values in the Matrix for Layer {layer_idx}, Head {head_idx}")
+    plt.xlabel("Columns")
+    plt.ylabel("Rows")
+
+    # Save the figure to the specified path
+    plt.savefig(output_path)
+    plt.close()
+
+
+def analyze_kv_cache_zeros(model):
+    """
+    Analyzes zero indices in the kv_cache.k_cache tensors for each layer in the model.
+    
+    Args:
+        model: The model containing layers with kv_cache.k_cache tensors.
+
+    Prints:
+        - Zero indices for each (head, sequence) pair in each layer.
+        - Statistics (average and standard deviation of zero counts) for each layer.
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    results_dir = os.path.join(parent_dir, "profile")
+    os.makedirs(results_dir, exist_ok=True)
+
+    for layer_idx, layer in enumerate(model.layers):
+        if layer_idx != 10:
+            continue
+        # Check if the layer has attention.kv_cache.k_cache
+        if hasattr(layer, 'attention') and hasattr(layer.attention, 'kv_cache'):
+            k_cache = layer.attention.kv_cache.k_cache
+            batch_size, num_heads, seq_length, head_dim = k_cache.shape
+            
+            zero_counts = []  # Store the count of zeros for statistics
+            
+            for head in range(num_heads):
+                if head != 10:
+                    continue
+                for seq in range(seq_length):
+                    # Extract the (1, 1, 1, 128) vector
+                    vector = k_cache[0, head, seq, :]
+
+                    # only look at the token containing nonzeros
+                    if torch.all(vector != 0):
+                        continue
+                    
+                    # Find indices of zeros
+                    zeros = torch.nonzero(vector == 0, as_tuple=True)[0]
+                    zero_counts.append(len(zeros))  # Count of zeros
+                    
+                os.makedirs(f"{results_dir}/layer-{layer_idx}", exist_ok=True)  
+                visualize_zeros(k_cache, layer_idx, head, f"{results_dir}/layer-{layer_idx}/head-{head}.png")
+            
+            # Calculate statistics
+            avg_zeros = np.mean(zero_counts)
+            std_zeros = np.std(zero_counts)
+
+            # store stats in a file
+            os.makedirs(f"{results_dir}/layer-{layer_idx}", exist_ok=True)  
+            with open(f"{results_dir}/layer-{layer_idx}/stats.json", "w") as f:
+                json.dump({"avg_zeros": avg_zeros, "std_zeros": std_zeros}, f)
+

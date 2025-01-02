@@ -45,6 +45,7 @@ sys.path.append(str(wd))
 
 from model import Transformer
 from tokenizer import get_tokenizer
+from utils.utils import analyze_kv_cache_zeros
 
 def multinomial_sample_one_no_sync(probs_sort): # Does multinomial sampling without a cuda synchronization
     q = torch.empty_like(probs_sort).exponential_(1)
@@ -474,6 +475,7 @@ def main(
                 temperature=temperature,
                 top_k=top_k,
             )
+            analyze_kv_cache_zeros(model)
             aggregate_metrics['accept_counts'].append(metrics['accept_counts'])
         if i == -1:
             print(f"Compilation time: {time.perf_counter() - t0:.2f} seconds")
