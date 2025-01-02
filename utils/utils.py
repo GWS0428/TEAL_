@@ -33,6 +33,14 @@ class SparsifyFn(nn.Module):
         self.threshold = self.distr.icdf(0.5 + sparsity/2).item() if sparsity != 0.0 else 0.0
         self.sparsity_level = sparsity
 
+    def set_topk(self, sparsity):
+        self.sparsity_level = sparsity
+        self.sparsity_type = "topk"
+
+    def set_topp(self, sparsity):
+        self.sparsity_level = sparsity
+        self.sparsity_type = "topp"
+
     def forward(self, x):
 
         # NOTE: we can + should change this to sparsify 99% of tokens instead of 50%
@@ -51,9 +59,43 @@ class SparsifyFn(nn.Module):
 
         assert x.size(1) == 1, "supposedly x is decode only"
         return self.apply(x)
-
+    
+    def forward_runtime_pruning_topk(self, x):
+        if x.size(1) > 1:
+            half_seq_len = x.size(1) // 2
+            last_context = x[:, -half_seq_len:, :]
+            modified_context = self.apply_runtime_pruning_topk(last_context, self.sparsity_level)
+            
+            x = torch.cat((x[:, :-half_seq_len, :], modified_context), dim=1)
+            return x
+        
+        if x.size(1) > 1 and not self.apply_prefill:
+            return x
+        
+        assert x.size(1) == 1, "supposedly x is decode only"
+        return self.apply_runtime_pruning_topk(x, self.sparsity_level)
+    
     def apply(self, x):
         return x.abs().gt(self.threshold) * x
+
+    def apply_runtime_pruning_topk(self, x, sparsity):
+        if sparsity == 0.0:
+            return torch.zeros_like(x)
+        elif sparsity == 1.0:
+            return x
+
+        # Compute the number of elements to keep
+        num_elements = x.numel()
+        k = int(num_elements * sparsity)
+        if k == 0:
+            return torch.zeros_like(x)
+
+        # Compute top-k absolute values
+        threshold, _ = torch.kthvalue(x.abs().view(-1), num_elements - k + 1)
+        
+        # Create a mask for top-k values
+        mask = x.abs() >= threshold
+        return x * mask
     
     def get_threshold(self):
         return self.threshold

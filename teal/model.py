@@ -145,6 +145,16 @@ class SparseModelMixin:
         self.set_mlp_sparsity(sparsity)
         self.set_self_attn_sparsity(sparsity)
 
+    def set_kv_sparsity(self, sparsity):
+        for layer in self.model.layers:
+            layer.self_attn.sparse_fns['k'].set_threshold(sparsity)
+            layer.self_attn.sparse_fns['v'].set_threshold(sparsity)
+
+    def set_topk_sparsity(self, sparsity):
+        for layer in self.model.layers:
+            layer.self_attn.sparse_fns['k'].set_topk(sparsity)
+            layer.self_attn.sparse_fns['v'].set_topk(sparsity)
+
     def set_sparsities(self, sparsities):
         for proj, sparses in sparsities.items():
             if proj in ['q', 'k', 'v', 'o']:

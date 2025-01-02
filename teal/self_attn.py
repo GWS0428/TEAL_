@@ -72,12 +72,19 @@ def _FA2_forward(
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
-
     else: 
-        x_q = self.sparse_fns['q'](hidden_states)
-
-        x_k = self.sparse_fns['k'](hidden_states)
-        x_v = self.sparse_fns['v'](hidden_states)
+        if self.sparse_fn_type == None:
+            x_q = self.sparse_fns['q'](hidden_states)
+            x_k = self.sparse_fns['k'](hidden_states)
+            x_v = self.sparse_fns['v'](hidden_states)
+        elif self.sparse_fn_type == 'kv_topk':
+            x_q = self.sparse_fns['q'](hidden_states)
+            x_k = self.sparse_fns['k'].forward_runtime_pruning_topk(hidden_states, self.sparsity_level)
+            x_v = self.sparse_fns['v'].forward_runtime_pruning_topk(hidden_states, self.sparsity_level)
+        elif self.sparse_fn_type == 'kv_topp':
+            raise NotImplementedError
+        else:
+            raise ValueError(f"Unknown sparse_fn_type: {self.sparse_fn_type}")
 
         query_states = self.q_proj(x_q)
         key_states = self.k_proj(x_k)
@@ -147,7 +154,8 @@ def _FA2_forward(
         self.activation_module.grab_activations(attn_output, 'h2')
         attn_output = self.o_proj(attn_output)
     else:
-        attn_output = self.sparse_fns['o'](attn_output)
+        if sparse_fn_type == None:
+            attn_output = self.sparse_fns['o'](attn_output)
         attn_output = self.o_proj(attn_output)
 
     if not output_attentions:
